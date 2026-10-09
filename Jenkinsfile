@@ -7,9 +7,25 @@
 // Optional Jenkins credential:
 //   smartticket-env  (Secret file) = the .env with JWT_SECRET, GEMINI_API_KEY, GMAIL_USER, GMAIL_PASS
 //   If it is missing, the existing backend-secrets Secret in the cluster is kept.
+//
+// Triggers: GitHub push webhook (see ci/README.md) + SCM polling as a fallback.
+// Only the main branch deploys; other branches / PRs (multibranch job) run tests and builds only.
+
+// Plain Pipeline job: BRANCH_NAME is unset -> treat as main. Multibranch: deploy main only.
+def shouldDeploy() {
+  return params.DEPLOY && (env.BRANCH_NAME == null || env.BRANCH_NAME == 'main')
+}
 
 pipeline {
   agent any
+
+  triggers {
+    // Build on every push (needs the GitHub plugin + a webhook to <jenkins>/github-webhook/)
+    githubPush()
+    // Fallback if the webhook can't reach Jenkins: check GitHub every 5 minutes.
+    // A commit already built by the webhook is not built again.
+    pollSCM('H/5 * * * *')
+  }
 
   options {
     timestamps()
@@ -79,7 +95,7 @@ pipeline {
     }
 
     stage('Load images into minikube') {
-      when { expression { params.DEPLOY } }
+      when { expression { shouldDeploy() } }
       steps {
         // minikube has its own Docker runtime: copy the images in (no registry needed)
         sh '''
@@ -91,7 +107,7 @@ pipeline {
     }
 
     stage('Secrets') {
-      when { expression { params.DEPLOY } }
+      when { expression { shouldDeploy() } }
       steps {
         script {
           try {
@@ -112,7 +128,7 @@ pipeline {
     }
 
     stage('Deploy to minikube') {
-      when { expression { params.DEPLOY } }
+      when { expression { shouldDeploy() } }
       steps {
         sh '''
           # Copy the manifests into the node and let its kubectl run kustomize
@@ -142,7 +158,7 @@ pipeline {
     }
 
     stage('Smoke test') {
-      when { expression { params.DEPLOY } }
+      when { expression { shouldDeploy() } }
       steps {
         // Throwaway pod inside the cluster: frontend health, backend readiness (Mongo connected),
         // and the nginx /api proxy (no token -> 401 is the expected answer)

@@ -7,6 +7,9 @@
 //                    (admin in the smartticket namespace only)
 //   smartticket-env  (Secret file, optional): .env -> backend-secrets Secret
 // The cluster must exist and be bootstrapped (eks/terraform + eks/scripts/bootstrap.sh).
+//
+// Intentionally NO push/webhook trigger: deploying to AWS costs money and should be a
+// deliberate "Build with Parameters". To automate it, add `triggers { githubPush() }`.
 
 pipeline {
   agent any

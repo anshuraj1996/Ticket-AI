@@ -418,6 +418,7 @@ bash eks/scripts/destroy.sh        # safe teardown (ALB and volumes first, then 
 
 ```mermaid
 flowchart LR
+    W([git push → GitHub webhook]) --> A
     A[Checkout] --> B[Unit tests<br/>JUnit report]
     B --> C[Build images<br/>backend ∥ frontend]
     C --> D[Load into<br/>minikube]
@@ -430,6 +431,10 @@ flowchart LR
 - Images are tagged with the **build number** and rolled out with `kubectl set image`.
 - Optional credential **`smartticket-env`** (Secret file = your `.env`) creates/updates the Kubernetes Secret.
 - The **`DEPLOY`** parameter lets you run tests and builds without deploying.
+- **Automatic builds:** a GitHub **push webhook** triggers the pipeline (`githubPush()`), with SCM polling every 5 minutes as a fallback. Only `main` deploys; other branches and PRs run tests and builds only.
+- **Local Jenkins?** GitHub can't reach `localhost`, so [`ci/webhook`](ci/webhook/docker-compose.yml) runs a **smee.io relay** that forwards webhook events without opening any ports.
+- The EKS pipeline stays **manual** on purpose (cloud costs).
+- Setup guide (Jenkins job, webhook, secret, troubleshooting): [`ci/README.md`](ci/README.md).
 
 ---
 
@@ -458,6 +463,7 @@ Ticket-AI/
 ├── helm/smartticket/         # Helm chart (same app, values per environment, incl. values-eks.yaml)
 ├── eks/                      # AWS EKS: Terraform, bootstrap/deploy/destroy scripts
 ├── Jenkinsfile.eks           # CI/CD pipeline for EKS (ECR + Helm)
+├── ci/                       # Jenkins + GitHub webhook setup, smee.io relay for local Jenkins
 ├── docker-compose.yml        # full local stack
 ├── Jenkinsfile               # CI/CD pipeline
 ├── .env.example

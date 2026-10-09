@@ -15,3 +15,5 @@ helm/smartticket/values-*.local.yaml
 # Personal interview notes (not part of the project)
 PROJECT_DEEP_DIVE.md
 PROJECT_DEEP_DIVE.docx
+# CI webhook relay config (private smee channel URL)
+ci/webhook/.env

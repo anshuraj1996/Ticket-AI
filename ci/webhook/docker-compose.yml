@@ -1,0 +1,31 @@
+# GitHub webhook relay for a Jenkins that GitHub can't reach (localhost / behind NAT).
+#
+#   GitHub ──push event──▶ https://smee.io/<channel> ──▶ smee-client (this container) ──▶ Jenkins /github-webhook/
+#
+# The client opens an OUTBOUND connection to smee.io, so no ports are opened on this machine.
+# smee.io is a public relay meant for development: anyone with the channel URL can read the
+# payloads, so keep the URL private and use a webhook secret (see ci/README.md).
+# For a Jenkins with a public URL you don't need this: point the GitHub webhook straight at it.
+#
+# Usage:
+#   cp ci/webhook/.env.example ci/webhook/.env     # set SMEE_URL
+#   docker compose -f ci/webhook/docker-compose.yml up -d
+#   docker compose -f ci/webhook/docker-compose.yml logs -f
+
+name: smartticket-ci
+
+services:
+  smee-relay:
+    image: node:22-alpine
+    restart: unless-stopped
+    env_file:
+      - .env
+    # Reaches Jenkins published on the host (Docker Desktop). If Jenkins runs in a container
+    # on a shared network, set JENKINS_WEBHOOK_URL=http://jenkins:8080/github-webhook/ instead.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: >
+      sh -c 'test -n "$$SMEE_URL" || { echo "SMEE_URL is not set (ci/webhook/.env)"; exit 1; };
+             exec npx --yes smee-client@2
+             --url "$$SMEE_URL"
+             --target "$${JENKINS_WEBHOOK_URL:-http://host.docker.internal:8080/github-webhook/}"'
