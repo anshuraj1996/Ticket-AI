@@ -1,0 +1,58 @@
+# Overrides for AWS EKS (used by eks/scripts/deploy.sh and Jenkinsfile.eks).
+#   helm upgrade --install smartticket helm/smartticket -n smartticket -f helm/smartticket/values-eks.yaml \
+#     --set images.backend.repository=<ECR>/smartticket-backend --set images.backend.tag=<TAG> ...
+#
+# Self-contained demo setup: MongoDB, Kafka, Redis and the Inngest dev server run in-cluster
+# on gp3 volumes. For production, switch to Atlas/DocumentDB, MSK, ElastiCache and Inngest Cloud
+# (see values-prod.example.yaml).
+
+images:
+  backend:
+    repository: "" # set by deploy.sh: <account>.dkr.ecr.<region>.amazonaws.com/smartticket-backend
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: ""
+    pullPolicy: IfNotPresent
+
+config:
+  appUrl: "" # set to https://<your-domain> once DNS points at the ALB
+
+secrets:
+  existingSecret: backend-secrets # created by deploy.sh from .env
+
+frontend:
+  service:
+    type: ClusterIP # traffic enters through the ALB only
+
+# AWS Load Balancer Controller turns this Ingress into an internet-facing ALB
+ingress:
+  enabled: true
+  className: alb
+  host: "" # empty = answer on the ALB's own DNS name; set your domain when you have one
+  annotations:
+    # Remove the nginx-specific defaults from values.yaml
+    nginx.ingress.kubernetes.io/proxy-body-size: null
+    nginx.ingress.kubernetes.io/proxy-read-timeout: null
+    nginx.ingress.kubernetes.io/proxy-send-timeout: null
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip # route straight to pod IPs (VPC CNI)
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=60
+    alb.ingress.kubernetes.io/tags: Project=smartticket
+    # HTTPS with an ACM certificate (deploy.sh sets these when CERT_ARN is given):
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:<region>:<account>:certificate/<id>
+    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    # alb.ingress.kubernetes.io/ssl-redirect: "443"
+  tls:
+    enabled: false # TLS terminates at the ALB (ACM), not with a Kubernetes Secret
+
+# EBS gp3 volumes (StorageClass from eks/k8s/storageclass-gp3.yaml)
+mongo:
+  storageClass: gp3
+  storage: 10Gi
+  backup:
+    storage: 20Gi
+kafka:
+  storageClass: gp3
+  storage: 10Gi

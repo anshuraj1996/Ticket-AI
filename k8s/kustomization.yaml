@@ -1,0 +1,29 @@
+# Apply everything:  kubectl apply -k k8s/
+# (create the backend-secrets Secret first, see k8s/backend/secret.example.yaml)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: smartticket
+
+resources:
+  - namespace.yaml
+  - network-policies.yaml
+  # dependencies
+  - infra/mongo.yaml
+  - infra/mongo-backup.yaml
+  - infra/kafka.yaml
+  - infra/inngest.yaml
+  - infra/redis.yaml
+  # backend
+  - backend/configmap.yaml
+  - backend/deployment.yaml
+  - backend/service.yaml
+  - backend/hpa.yaml
+  - backend/pdb.yaml
+  - backend/consumer-deployment.yaml
+  # frontend
+  - frontend/deployment.yaml
+  - frontend/service.yaml
+  - frontend/hpa.yaml
+  - frontend/pdb.yaml
+  - frontend/ingress.yaml

@@ -1,0 +1,58 @@
+# Inngest dev server (local/dev clusters only).
+# In production, remove this and point the backend at Inngest Cloud
+# (INNGEST_EVENT_KEY + INNGEST_SIGNING_KEY instead of INNGEST_DEV/INNGEST_BASE_URL).
+apiVersion: v1
+kind: Service
+metadata:
+  name: inngest
+  labels:
+    app.kubernetes.io/name: inngest
+    app.kubernetes.io/part-of: smartticket
+spec:
+  selector:
+    app.kubernetes.io/name: inngest
+  ports:
+    - name: http
+      port: 8288
+      targetPort: 8288
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inngest
+  labels:
+    app.kubernetes.io/name: inngest
+    app.kubernetes.io/part-of: smartticket
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inngest
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: inngest
+        app.kubernetes.io/part-of: smartticket
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      containers:
+        - name: inngest
+          # Pinned: newer dev servers reject the inngest@3.40 SDK (sdk_version_denied)
+          image: inngest/inngest:v1.12.0
+          args: ["inngest", "dev", "-u", "http://backend:3000/api/inngest"]
+          ports:
+            - name: http
+              containerPort: 8288
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8288
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi

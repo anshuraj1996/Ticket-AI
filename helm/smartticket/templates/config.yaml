@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  labels:
+    app.kubernetes.io/name: backend
+    {{- include "smartticket.labels" . | nindent 4 }}
+data:
+  PORT: "3000"
+  NODE_ENV: production
+  MONGO_URI: {{ .Values.config.mongoUri | quote }}
+  APP_URL: {{ .Values.config.appUrl | quote }}
+  {{- if .Values.config.inngest.dev }}
+  INNGEST_DEV: "1"
+  INNGEST_BASE_URL: {{ .Values.config.inngest.baseUrl | quote }}
+  {{- end }}
+  {{- /* Using Kafka/Redis depends on the URL being set, not on deploying them in-cluster */}}
+  {{- if .Values.config.kafkaBrokers }}
+  KAFKA_BROKERS: {{ .Values.config.kafkaBrokers | quote }}
+  KAFKA_TICKET_TOPIC: {{ .Values.config.kafkaTopic | quote }}
+  KAFKA_TOPIC_PARTITIONS: {{ .Values.kafka.partitions | quote }}
+  {{- end }}
+  {{- if .Values.config.redisUrl }}
+  REDIS_URL: {{ .Values.config.redisUrl | quote }}
+  {{- end }}
+  USER_CACHE_TTL_SECONDS: {{ .Values.config.userCacheTtlSeconds | quote }}
+  AUTH_RATE_LIMIT_MAX: {{ .Values.config.authRateLimit.max | quote }}
+  AUTH_RATE_LIMIT_WINDOW_SECONDS: {{ .Values.config.authRateLimit.windowSeconds | quote }}
+{{- if not .Values.secrets.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-secrets
+  labels:
+    app.kubernetes.io/name: backend
+    {{- include "smartticket.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  JWT_SECRET: {{ required "secrets.jwtSecret is required (or set secrets.existingSecret)" .Values.secrets.jwtSecret | quote }}
+  GEMINI_API_KEY: {{ .Values.secrets.geminiApiKey | quote }}
+  GMAIL_USER: {{ .Values.secrets.gmailUser | quote }}
+  GMAIL_PASS: {{ .Values.secrets.gmailPass | quote }}
+{{- end }}

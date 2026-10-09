@@ -1,0 +1,17 @@
+# Normalize line endings in the repo
+* text=auto
+
+# Must stay LF everywhere: executed by bash / Linux containers / Jenkins agents
+*.sh               text eol=lf
+Jenkinsfile*       text eol=lf
+Dockerfile         text eol=lf
+*.template         text eol=lf
+*.tpl              text eol=lf
+*.yaml             text eol=lf
+*.yml              text eol=lf
+*.tf               text eol=lf
+
+# Binary
+*.png  binary
+*.jpg  binary
+*.docx binary

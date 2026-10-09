@@ -1,0 +1,15 @@
+apiVersion: v2
+name: smartticket
+description: SmartTicket AI - AI-powered IT helpdesk (React, Express, MongoDB, Kafka, Redis, Inngest, Gemini)
+type: application
+version: 1.0.0 # chart version
+appVersion: "1.0.0" # default image tag
+keywords:
+  - helpdesk
+  - ticketing
+  - ai
+  - gemini
+  - kafka
+maintainers:
+  - name: Anshuman Singh
+    url: https://github.com/anshuraj1996

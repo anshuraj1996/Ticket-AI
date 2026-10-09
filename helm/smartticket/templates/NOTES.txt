@@ -1,0 +1,23 @@
+SmartTicket AI {{ .Chart.AppVersion }} installed in namespace "{{ .Release.Namespace }}".
+
+Watch the pods start:
+  kubectl -n {{ .Release.Namespace }} get pods -w
+
+Open the app:
+{{- if .Values.ingress.enabled }}
+  Ingress: http://{{ .Values.ingress.host }}
+    minikube addons enable ingress
+    minikube tunnel                       (keep it running)
+    hosts file:  127.0.0.1  {{ .Values.ingress.host }}
+{{- end }}
+{{- if eq .Values.frontend.service.type "NodePort" }}
+  NodePort: minikube service frontend -n {{ .Release.Namespace }} --url
+{{- end }}
+{{- if or .Values.backend.autoscaling.enabled .Values.frontend.autoscaling.enabled }}
+
+Autoscaling needs metrics-server:  minikube addons enable metrics-server
+{{- end }}
+{{- if .Values.secrets.existingSecret }}
+
+Using existing Secret "{{ .Values.secrets.existingSecret }}". Make sure it exists in this namespace.
+{{- end }}

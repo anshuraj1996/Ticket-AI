@@ -1,0 +1,42 @@
+# Single public entry point: http://smartticket.local -> frontend nginx,
+# which serves the React app and proxies /api/* to the backend Service.
+#
+# One-time setup on minikube:
+#   minikube addons enable ingress
+#   minikube tunnel                          # keep running (docker driver on Windows/macOS)
+#   add to C:\Windows\System32\drivers\etc\hosts:   127.0.0.1  smartticket.local
+#
+# Without an ingress controller this object is accepted but unused, and the
+# NodePort Service (frontend:30080) keeps working.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smartticket
+  labels:
+    app.kubernetes.io/name: smartticket
+    app.kubernetes.io/part-of: smartticket
+  annotations:
+    # Ticket descriptions can be long; default nginx limit is 1m
+    nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+    # Gemini triage runs in the background, but keep a sane upper bound for API calls
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+spec:
+  ingressClassName: nginx
+  # HTTPS: create a TLS Secret (e.g. with cert-manager or
+  # `kubectl -n smartticket create secret tls smartticket-tls --cert=... --key=...`), then uncomment:
+  # tls:
+  #   - hosts: ["smartticket.local"]
+  #     secretName: smartticket-tls
+  rules:
+    - host: smartticket.local
+      http:
+        paths:
+          # Everything goes to the frontend; its nginx forwards /api/* to the backend
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  name: http

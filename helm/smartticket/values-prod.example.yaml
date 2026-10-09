@@ -1,0 +1,61 @@
+# EXAMPLE production overrides (copy to values-prod.yaml and adjust).
+#   helm upgrade --install smartticket helm/smartticket -n smartticket --create-namespace \
+#     -f helm/smartticket/values-prod.yaml --set images.backend.tag=42 --set images.frontend.tag=42
+#
+# Same chart, different environment: images from a registry, managed MongoDB/Kafka/Redis,
+# Inngest Cloud, HTTPS, bigger scaling limits.
+
+images:
+  backend:
+    repository: docker.io/anshuraj1996/smartticket-backend
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: docker.io/anshuraj1996/smartticket-frontend
+    pullPolicy: IfNotPresent
+
+config:
+  appUrl: https://smartticket.example.com
+  # Managed services (credentials go in the Secret if the URI contains them)
+  mongoUri: mongodb+srv://cluster0.example.mongodb.net/smartticket
+  kafkaBrokers: b-1.kafka.example.com:9092,b-2.kafka.example.com:9092
+  redisUrl: redis://redis.example.internal:6379
+  inngest:
+    dev: false # Inngest Cloud: INNGEST_EVENT_KEY + INNGEST_SIGNING_KEY in the Secret
+
+secrets:
+  existingSecret: backend-secrets # created by CI / External Secrets, never in git
+
+backend:
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+  pdb:
+    minAvailable: 2
+
+frontend:
+  service:
+    type: ClusterIP # traffic comes through the Ingress only
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 6
+
+ingress:
+  host: smartticket.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  tls:
+    enabled: true
+    secretName: smartticket-tls
+
+# Don't deploy these in-cluster: the app uses the managed endpoints from `config` above
+# (the Kafka audit consumer still runs, because config.kafkaBrokers is set).
+mongo:
+  enabled: false
+kafka:
+  enabled: false
+redis:
+  enabled: false
+inngest:
+  enabled: false

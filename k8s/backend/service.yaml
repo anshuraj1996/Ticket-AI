@@ -1,0 +1,18 @@
+# Name must stay "backend": the frontend nginx (BACKEND_URL) and the
+# Inngest dev server (-u http://backend:3000/api/inngest) both use it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: smartticket
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

@@ -1,0 +1,177 @@
+// SmartTicket AI on AWS EKS: test -> build -> push to ECR -> helm upgrade -> smoke test
+//
+// Agent requirements: git, bash, docker, aws CLI v2, kubectl, helm.
+// Jenkins credentials:
+//   aws-smartticket  (AWS Credentials, "CloudBees AWS Credentials" plugin): IAM user/role that can
+//                    push to ECR, call eks:DescribeCluster, and is the Terraform `ci_principal_arn`
+//                    (admin in the smartticket namespace only)
+//   smartticket-env  (Secret file, optional): .env -> backend-secrets Secret
+// The cluster must exist and be bootstrapped (eks/terraform + eks/scripts/bootstrap.sh).
+
+pipeline {
+  agent any
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 45, unit: 'MINUTES')
+  }
+
+  parameters {
+    string(name: 'AWS_REGION', defaultValue: 'ap-south-1', description: 'AWS region of the cluster')
+    string(name: 'CLUSTER_NAME', defaultValue: 'smartticket', description: 'EKS cluster name')
+    string(name: 'APP_HOST', defaultValue: '', description: 'Optional domain for the Ingress')
+    string(name: 'CERT_ARN', defaultValue: '', description: 'Optional ACM certificate ARN (HTTPS)')
+  }
+
+  environment {
+    NAMESPACE  = 'smartticket'
+    TEST_IMAGE = "smartticket-backend-test:${env.BUILD_NUMBER}"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          // ECR tags are immutable: use build number + commit
+          env.IMAGE_TAG = "${env.BUILD_NUMBER}-${sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()}"
+        }
+        echo "Image tag: ${env.IMAGE_TAG}"
+      }
+    }
+
+    stage('Backend unit tests') {
+      steps {
+        sh 'docker build --target test -t "$TEST_IMAGE" BACKEND'
+        sh '''
+          set +e
+          name="smartticket-test-$BUILD_NUMBER"
+          docker rm -f "$name" >/dev/null 2>&1
+          docker run --name "$name" "$TEST_IMAGE"
+          status=$?
+          rm -rf reports && mkdir -p reports
+          docker cp "$name:/app/reports/." reports/
+          docker rm -f "$name" >/dev/null 2>&1
+          exit $status
+        '''
+      }
+      post {
+        always { junit allowEmptyResults: true, testResults: 'reports/*.xml' }
+      }
+    }
+
+    stage('Build & push to ECR') {
+      steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-smartticket']]) {
+          sh '''
+            ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+            REGISTRY="$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com"
+            echo "$REGISTRY" > .registry
+
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | docker login --username AWS --password-stdin "$REGISTRY"
+
+            docker build --platform linux/amd64 -t "$REGISTRY/smartticket-backend:$IMAGE_TAG" BACKEND
+            docker build --platform linux/amd64 --build-arg VITE_API_URL=/api \
+              -t "$REGISTRY/smartticket-frontend:$IMAGE_TAG" FRONTEND
+
+            docker push "$REGISTRY/smartticket-backend:$IMAGE_TAG"
+            docker push "$REGISTRY/smartticket-frontend:$IMAGE_TAG"
+          '''
+        }
+      }
+    }
+
+    stage('Deploy to EKS') {
+      steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-smartticket']]) {
+          sh '''
+            export KUBECONFIG="$WORKSPACE/.kubeconfig"
+            aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
+          '''
+          script {
+            try {
+              withCredentials([file(credentialsId: 'smartticket-env', variable: 'ENV_FILE')]) {
+                sh '''
+                  export KUBECONFIG="$WORKSPACE/.kubeconfig"
+                  kubectl -n "$NAMESPACE" create secret generic backend-secrets \
+                    --from-env-file="$ENV_FILE" --dry-run=client -o yaml | kubectl apply -f -
+                '''
+              }
+            } catch (err) {
+              echo "Credential 'smartticket-env' not available (${err.message}); keeping the existing backend-secrets Secret."
+            }
+          }
+          sh '''
+            export KUBECONFIG="$WORKSPACE/.kubeconfig"
+            REGISTRY=$(cat .registry)
+
+            set -- -f helm/smartticket/values-eks.yaml \
+              --set images.backend.repository="$REGISTRY/smartticket-backend" \
+              --set images.backend.tag="$IMAGE_TAG" \
+              --set images.frontend.repository="$REGISTRY/smartticket-frontend" \
+              --set images.frontend.tag="$IMAGE_TAG"
+
+            if [ -n "$APP_HOST" ]; then
+              set -- "$@" --set ingress.host="$APP_HOST" --set config.appUrl="https://$APP_HOST"
+            fi
+            if [ -n "$CERT_ARN" ]; then
+              set -- "$@" \
+                --set-string ingress.annotations."alb\\.ingress\\.kubernetes\\.io/certificate-arn"="$CERT_ARN" \
+                --set-string ingress.annotations."alb\\.ingress\\.kubernetes\\.io/listen-ports"='[{"HTTP": 80}, {"HTTPS": 443}]' \
+                --set-string ingress.annotations."alb\\.ingress\\.kubernetes\\.io/ssl-redirect"=443
+            fi
+
+            # --atomic rolls back to the previous release if the new one is not healthy
+            helm upgrade --install smartticket helm/smartticket -n "$NAMESPACE" "$@" \
+              --atomic --wait --timeout 15m
+          '''
+        }
+      }
+      post {
+        failure {
+          sh '''
+            export KUBECONFIG="$WORKSPACE/.kubeconfig"
+            kubectl -n "$NAMESPACE" get pods -o wide || true
+            kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp | tail -30 || true
+            helm -n "$NAMESPACE" history smartticket || true
+          '''
+        }
+      }
+    }
+
+    stage('Smoke test') {
+      steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-smartticket']]) {
+          sh '''
+            export KUBECONFIG="$WORKSPACE/.kubeconfig"
+
+            # Inside the cluster: frontend health, backend readiness, nginx /api proxy (401 expected)
+            kubectl -n "$NAMESPACE" delete pod smoke-test --ignore-not-found
+            kubectl -n "$NAMESPACE" run smoke-test --rm -i --restart=Never --image=busybox:1.36 \
+              --labels=app.kubernetes.io/name=smoke-test -- sh -c '
+                set -e
+                wget -qO- http://frontend/healthz
+                wget -qO- http://backend:3000/readyz
+                code=$(wget -S -O /dev/null http://frontend/api/tickets 2>&1 | grep "HTTP/" | tail -1 | awk "{print \\$2}")
+                echo "GET /api/tickets via nginx -> $code"
+                [ "$code" = "401" ]
+              '
+
+            ALB=$(kubectl -n "$NAMESPACE" get ingress smartticket -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            echo "ALB: http://$ALB"
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      sh 'docker rmi "$TEST_IMAGE" >/dev/null 2>&1 || true'
+      sh 'rm -f .kubeconfig .registry'
+    }
+  }
+}

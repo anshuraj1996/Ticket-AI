@@ -1,0 +1,17 @@
+.env
+node_modules
+k8s/backend/secret.yaml
+BACKEND/reports
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+eks/terraform/terraform.tfvars
+eks/terraform/backend.tf
+crash.log
+# Helm
+helm/smartticket/values-prod.yaml
+helm/smartticket/values-*.local.yaml
+# Personal interview notes (not part of the project)
+PROJECT_DEEP_DIVE.md
+PROJECT_DEEP_DIVE.docx

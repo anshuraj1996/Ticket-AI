@@ -1,0 +1,66 @@
+# Frontend: nginx serving the Vite build and proxying /api/* to the backend Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: smartticket
+spec:
+  # No "replicas": the HorizontalPodAutoscaler (hpa.yaml) owns the replica count
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frontend
+        app.kubernetes.io/component: web
+        app.kubernetes.io/part-of: smartticket
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false # app never calls the Kubernetes API
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101 # "nginx" user in nginx-unprivileged
+        runAsGroup: 101
+      containers:
+        - name: frontend
+          image: smartticket-frontend:1.0.0
+          imagePullPolicy: IfNotPresent # image is loaded into minikube, not pulled from a registry
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Used by nginx.conf.template: /api/ -> backend Service
+            - name: BACKEND_URL
+              value: http://backend:3000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

@@ -1,0 +1,172 @@
+# Backend API (Express) + its Service, HPA and PDB
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/component: api
+    {{- include "smartticket.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend
+        app.kubernetes.io/component: api
+        {{- include "smartticket.podLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pods when config changes
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      {{- include "smartticket.podDefaults" . | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      initContainers:
+        {{- include "smartticket.waitForDeps" . | nindent 8 }}
+      containers:
+        - name: backend
+          image: {{ include "smartticket.backendImage" . }}
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: {{ include "smartticket.secretName" . }}
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          {{- include "smartticket.containerSecurity" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+    {{- include "smartticket.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+{{- if .Values.backend.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+    {{- include "smartticket.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: {{ .Values.backend.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.backend.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.backend.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+{{- end }}
+{{- if .Values.backend.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+    {{- include "smartticket.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.backend.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+{{- end }}
+{{- if and .Values.consumer.enabled .Values.config.kafkaBrokers }}
+---
+# Kafka audit consumer: same image, different command
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ticket-consumer
+  labels:
+    app.kubernetes.io/name: ticket-consumer
+    app.kubernetes.io/component: consumer
+    {{- include "smartticket.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.consumer.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ticket-consumer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ticket-consumer
+        app.kubernetes.io/component: consumer
+        {{- include "smartticket.podLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      {{- include "smartticket.podDefaults" . | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      initContainers:
+        {{- include "smartticket.waitForDeps" . | nindent 8 }}
+      containers:
+        - name: consumer
+          image: {{ include "smartticket.backendImage" . }}
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
+          command: ["node", "kafka/consumer.js"]
+          env:
+            - name: KAFKA_CLIENT_ID
+              value: smartticket-consumer
+            - name: KAFKA_CONSUMER_GROUP
+              value: ticket-audit
+          envFrom:
+            - configMapRef:
+                name: backend-config
+          resources:
+            {{- toYaml .Values.consumer.resources | nindent 12 }}
+          {{- include "smartticket.containerSecurity" . | nindent 10 }}
+{{- end }}

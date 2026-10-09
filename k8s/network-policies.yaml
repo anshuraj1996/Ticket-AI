@@ -1,0 +1,144 @@
+# Zero-trust networking for the smartticket namespace (ingress rules only):
+# everything is denied, then each service allows exactly the callers it needs.
+#
+#   anyone ─▶ frontend:8080 ─▶ backend:3000 ─▶ mongo:27017, redis:6379, kafka:9092, inngest:8288
+#              inngest ───────▶ backend:3000 (workflow step callbacks)
+#              ticket-consumer ─▶ mongo, kafka      mongo-backup ─▶ mongo
+#
+# Enforcement needs a CNI that supports NetworkPolicy (e.g. `minikube start --cni=calico`).
+# On minikube's default CNI these objects are accepted but not enforced (no harm).
+# Egress is not restricted, so DNS and external APIs (Gemini, Gmail) keep working.
+
+# 1) Deny all incoming traffic to every pod in the namespace by default
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+# 2) Frontend is the public entry point (NodePort / Ingress controller)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-from-anywhere
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+---
+# 3) Backend: nginx proxy, Inngest callbacks, and the CI smoke-test pod
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: frontend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: inngest
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: smoke-test # Jenkinsfile "Smoke test" stage
+      ports:
+        - port: 3000
+          protocol: TCP
+---
+# 4) Inngest dev server: only the backend sends events to it
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-inngest
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: inngest
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backend
+      ports:
+        - port: 8288
+          protocol: TCP
+---
+# 5) MongoDB: backend, Kafka consumer, nightly backup job
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mongo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mongo
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ticket-consumer
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mongo-backup
+      ports:
+        - port: 27017
+          protocol: TCP
+---
+# 6) Kafka: producer (backend) and consumer
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kafka
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kafka
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ticket-consumer
+      ports:
+        - port: 9092
+          protocol: TCP
+---
+# 7) Redis: backend only (cache + rate limiting)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backend
+      ports:
+        - port: 6379
+          protocol: TCP

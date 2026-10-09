@@ -1,0 +1,27 @@
+# Non-secret backend configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: smartticket
+data:
+  PORT: "3000"
+  NODE_ENV: production
+  MONGO_URI: mongodb://mongo:27017/smartticket
+  APP_URL: http://smartticket.local
+
+  # Inngest dev server inside the cluster (see k8s/infra/inngest.yaml)
+  INNGEST_DEV: "1"
+  INNGEST_BASE_URL: http://inngest:8288
+
+  # Kafka
+  KAFKA_BROKERS: kafka:9092
+  KAFKA_TICKET_TOPIC: ticket-events
+
+  # Redis (cache + rate limiting; backend fails open if it is down)
+  REDIS_URL: redis://redis:6379
+  USER_CACHE_TTL_SECONDS: "60"
+  AUTH_RATE_LIMIT_WINDOW_SECONDS: "900"
+  AUTH_RATE_LIMIT_MAX: "10"

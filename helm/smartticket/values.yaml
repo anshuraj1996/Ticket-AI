@@ -1,0 +1,136 @@
+# Default values for the SmartTicket AI chart.
+# Install one release per namespace: resource names are fixed (backend, mongo, kafka, ...)
+# because nginx and the Inngest dev server address them by those names.
+
+images:
+  backend:
+    repository: smartticket-backend
+    tag: "" # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent # images are loaded into minikube, not pulled
+  frontend:
+    repository: smartticket-frontend
+    tag: ""
+    pullPolicy: IfNotPresent
+  busybox: busybox:1.36 # wait-for-deps init containers
+
+# Non-secret backend configuration (rendered into the backend-config ConfigMap).
+# kafkaBrokers / redisUrl = "" turns that feature off in the app (it is optional).
+# They are independent of kafka.enabled / redis.enabled, which only decide whether
+# the chart deploys Kafka / Redis inside the cluster.
+config:
+  appUrl: http://smartticket.local
+  mongoUri: mongodb://mongo:27017/smartticket
+  kafkaBrokers: kafka:9092
+  kafkaTopic: ticket-events
+  redisUrl: redis://redis:6379
+  userCacheTtlSeconds: 60
+  authRateLimit:
+    max: 10
+    windowSeconds: 900
+  inngest:
+    dev: true # false = Inngest Cloud (put INNGEST_EVENT_KEY / INNGEST_SIGNING_KEY in the Secret)
+    baseUrl: http://inngest:8288
+
+# Backend secrets. Prefer existingSecret (e.g. created from .env with
+#   kubectl -n smartticket create secret generic backend-secrets --from-env-file=.env)
+# so real values never live in a values file.
+secrets:
+  existingSecret: ""
+  jwtSecret: "" # required when existingSecret is empty
+  geminiApiKey: ""
+  gmailUser: ""
+  gmailPass: ""
+
+backend:
+  replicas: 2 # used only when autoscaling is disabled
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  autoscaling:
+    enabled: true # needs metrics-server
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+consumer:
+  enabled: true # deployed only when config.kafkaBrokers is set
+  replicas: 1 # up to the topic's partition count
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { memory: 256Mi }
+
+frontend:
+  replicas: 2
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 128Mi }
+  service:
+    type: NodePort
+    nodePort: 30080
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+ingress:
+  enabled: true
+  className: nginx
+  host: smartticket.local
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+  tls:
+    enabled: false
+    secretName: smartticket-tls
+
+networkPolicies:
+  enabled: true # enforced only by CNIs that support them (e.g. Calico)
+
+# ---------- In-cluster dependencies (disable to use managed services) ----------
+
+mongo:
+  enabled: true
+  image: mongo:7
+  storage: 2Gi
+  storageClass: "" # "" = cluster default
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retentionDays: 7
+    storage: 5Gi
+
+kafka:
+  enabled: true
+  image: apache/kafka:3.9.1
+  storage: 2Gi
+  storageClass: ""
+  partitions: 3
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { memory: 1Gi }
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  maxmemory: 128mb
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 192Mi }
+
+inngest:
+  enabled: true # dev server; disable in production and use Inngest Cloud
+  image: inngest/inngest:v1.12.0 # newer dev servers reject the inngest@3.40 SDK
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }

@@ -1,0 +1,49 @@
+{{- if .Values.networkPolicies.enabled }}
+# Default-deny ingress, then allow only the callers each service needs.
+# Egress stays open (DNS, Gemini, Gmail).
+{{- $labels := include "smartticket.labels" . }}
+{{- $rules := list
+  (dict "name" "frontend" "port" 8080 "from" (list))
+  (dict "name" "backend" "port" 3000 "from" (list "frontend" "inngest" "smoke-test"))
+  (dict "name" "inngest" "port" 8288 "from" (list "backend"))
+  (dict "name" "mongo" "port" 27017 "from" (list "backend" "ticket-consumer" "mongo-backup"))
+  (dict "name" "kafka" "port" 9092 "from" (list "backend" "ticket-consumer"))
+  (dict "name" "redis" "port" 6379 "from" (list "backend"))
+}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+{{- range $rules }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-{{ .name }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .name }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - port: {{ .port }}
+          protocol: TCP
+      {{- if .from }}
+      from:
+        {{- range .from }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ . }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}
