@@ -108,7 +108,6 @@ In every IT company, the first minutes or hours of a support ticket are lost to 
 
 <img width="1919" height="923" alt="Ticket details with AI notes" src="https://github.com/user-attachments/assets/2b70a2dd-75c5-4e32-a719-5a1e32ddf10a" />
 
-<img width="1759" height="787" alt="Create ticket" src="https://github.com/user-attachments/assets/834ecd6d-ff5a-49f9-9820-fc9866b8e706" />
 
 <img width="1919" height="929" alt="Admin dashboard" src="https://github.com/user-attachments/assets/1a174080-7b2e-43fd-9089-83652265980c" />
 
